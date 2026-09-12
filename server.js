@@ -30,44 +30,68 @@ function admin(req,res,next){
 app.get("/api/products",(req,res)=>res.json(readJSON(productsFile)));
 
 app.post("/api/orders",async(req,res)=>{
-  const {items,customer,paymentMethod="cod"}=req.body;
-  if(!Array.isArray(items)||!items.length||!customer?.name||!customer?.phone||!customer?.address)
-    return res.status(400).json({error:"Please provide products and complete delivery details."});
-  const products=readJSON(productsFile);
-  let total=0, normalized=[];
-  for(const item of items){
-    const p=products.find(x=>x.id===Number(item.id));
-    const qty=Math.max(1,Number(item.qty)||1);
-    if(!p) return res.status(400).json({error:"Product not found"});
-    if(qty>p.stock) return res.status(400).json({error:`Only ${p.stock} left for ${p.name}`});
-    total += p.price*qty;
-    normalized.push({id:p.id,name:p.name,price:p.price,qty});
-  }
-  const order={id:"UQ"+Date.now().toString(36).toUpperCase(),items:normalized,customer,total,paymentMethod,status:"Pending",createdAt:new Date().toISOString()};
-  const orders=readJSON(ordersFile); orders.unshift(order); writeJSON(ordersFile,orders);
-  const updated=products.map(p=>{const it=normalized.find(x=>x.id===p.id); return it?{...p,stock:Math.max(0,p.stock-it.qty)}:p});
-  writeJSON(productsFile,updated);
+  try{
+    const {items,customer,paymentMethod="cod"}=req.body;
+    if(!Array.isArray(items)||!items.length||!customer?.name||!customer?.phone||!customer?.address)
+      return res.status(400).json({error:"Please provide products and complete delivery details."});
+    const products=readJSON(productsFile);
+    let total=0, normalized=[];
+    for(const item of items){
+      const p=products.find(x=>x.id===Number(item.id));
+      const qty=Math.max(1,Number(item.qty)||1);
+      if(!p) return res.status(400).json({error:"Product not found"});
+      if(qty>p.stock) return res.status(400).json({error:`Only ${p.stock} left for ${p.name}`});
+      total += p.price*qty;
+      normalized.push({id:p.id,name:p.name,price:p.price,qty});
+    }
 
-  if(paymentMethod==="razorpay"){
-    if(!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)
-      return res.status(503).json({error:"Razorpay is not configured. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in environment variables."});
-    const razorpay=new Razorpay({key_id:process.env.RAZORPAY_KEY_ID,key_secret:process.env.RAZORPAY_KEY_SECRET});
-    const rz=await razorpay.orders.create({amount:total*100,currency:"INR",receipt:order.id,payment_capture:1});
-    order.razorpayOrderId=rz.id;
-    writeJSON(ordersFile,orders.map(x=>x.id===order.id?order:x));
-    return res.json({orderId:order.id,razorpayOrderId:rz.id,amount:total*100,keyId:process.env.RAZORPAY_KEY_ID});
+    if(paymentMethod==="razorpay"){
+      if(!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET)
+        return res.status(503).json({error:"Razorpay is not configured."});
+      const order={id:"UQ"+Date.now().toString(36).toUpperCase(),items:normalized,customer,total,paymentMethod,status:"Payment Pending",createdAt:new Date().toISOString()};
+      const razorpay=new Razorpay({key_id:process.env.RAZORPAY_KEY_ID,key_secret:process.env.RAZORPAY_KEY_SECRET});
+      const rz=await razorpay.orders.create({amount:total*100,currency:"INR",receipt:order.id});
+      order.razorpayOrderId=rz.id;
+      const orders=readJSON(ordersFile);orders.unshift(order);writeJSON(ordersFile,orders);
+      return res.json({orderId:order.id,razorpayOrderId:rz.id,amount:total*100,keyId:process.env.RAZORPAY_KEY_ID});
+    }
+
+    const order={id:"UQ"+Date.now().toString(36).toUpperCase(),items:normalized,customer,total,paymentMethod,status:"Pending",createdAt:new Date().toISOString()};
+    const orders=readJSON(ordersFile);orders.unshift(order);writeJSON(ordersFile,orders);
+    const updated=products.map(p=>{const it=normalized.find(x=>x.id===p.id); return it?{...p,stock:Math.max(0,p.stock-it.qty)}:p});
+    writeJSON(productsFile,updated);
+    res.json({orderId:order.id,total});
+  }catch(err){
+    console.error("Order error",err);
+    res.status(500).json({error:"Unable to create order. Please try again."});
   }
-  res.json({orderId:order.id,total});
 });
 
 app.post("/api/payment/verify",(req,res)=>{
   const {orderId,razorpay_order_id,razorpay_payment_id,razorpay_signature}=req.body;
   const orders=readJSON(ordersFile), order=orders.find(x=>x.id===orderId);
   if(!order) return res.status(404).json({error:"Order not found"});
-  const expected=crypto.createHmac("sha256",process.env.RAZORPAY_KEY_SECRET||"").update(razorpay_order_id+"|"+razorpay_payment_id).digest("hex");
+  if(!order.razorpayOrderId || order.razorpayOrderId!==razorpay_order_id)
+    return res.status(400).json({error:"Payment order mismatch"});
+  const expected=crypto.createHmac("sha256",process.env.RAZORPAY_KEY_SECRET||"").update(order.razorpayOrderId+"|"+razorpay_payment_id).digest("hex");
   if(expected!==razorpay_signature) return res.status(400).json({error:"Payment verification failed"});
-  order.status="Paid"; order.razorpayPaymentId=razorpay_payment_id;
-  writeJSON(ordersFile,orders); res.json({ok:true});
+  if(order.status!=="Paid"){
+    const products=readJSON(productsFile);
+    for(const it of order.items){
+      const p=products.find(x=>x.id===it.id);
+      if(!p || it.qty>p.stock) return res.status(409).json({error:`Stock changed for ${it.name}. Please contact us for assistance.`});
+    }
+    for(const it of order.items){
+      const p=products.find(x=>x.id===it.id);
+      p.stock=Math.max(0,p.stock-it.qty);
+    }
+    writeJSON(productsFile,products);
+    order.status="Paid";
+    order.razorpayPaymentId=razorpay_payment_id;
+    order.paidAt=new Date().toISOString();
+    writeJSON(ordersFile,orders);
+  }
+  res.json({ok:true,orderId:order.id});
 });
 
 app.get("/api/admin/orders",admin,(req,res)=>res.json(readJSON(ordersFile)));
