@@ -16,7 +16,7 @@ if (!fs.existsSync(ordersFile)) fs.writeFileSync(ordersFile,"[]");
 
 app.use(express.json());
 app.use(express.urlencoded({extended:true}));
-app.use(express.static(path.join(ROOT,"public")));
+app.use(express.static(path.join(ROOT,"public"),{index:false}));
 
 const readJSON = f => JSON.parse(fs.readFileSync(f,"utf8"));
 const writeJSON = (f,d) => fs.writeFileSync(f,JSON.stringify(d,null,2));
@@ -43,7 +43,6 @@ app.post("/api/orders",async(req,res)=>{
       total += p.price*qty;
       normalized.push({id:p.id,name:p.name,price:p.price,qty});
     }
-
     if(paymentMethod==="razorpay" || paymentMethod==="cod"){
       if(!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return res.status(503).json({error:"Razorpay is not configured."});
       const isCOD=paymentMethod==="cod";
@@ -56,7 +55,6 @@ app.post("/api/orders",async(req,res)=>{
       const orders=readJSON(ordersFile);orders.unshift(order);writeJSON(ordersFile,orders);
       return res.json({orderId:order.id,razorpayOrderId:rz.id,amount:advanceAmount*100,total,advanceAmount,balanceDue,paymentMethod,keyId:process.env.RAZORPAY_KEY_ID});
     }
-
     return res.status(400).json({error:"Invalid payment method."});
   }catch(err){console.error("Order error",err);res.status(500).json({error:"Unable to create order. Please try again."});}
 });
@@ -87,5 +85,13 @@ app.post("/api/admin/products",admin,(req,res)=>{const p=readJSON(productsFile),
 app.put("/api/admin/products/:id",admin,(req,res)=>{const p=readJSON(productsFile),i=p.findIndex(x=>x.id===Number(req.params.id));if(i<0)return res.status(404).json({error:"Product not found"});p[i]={...p[i],...req.body,id:p[i].id,price:Number(req.body.price??p[i].price),stock:Number(req.body.stock??p[i].stock)};writeJSON(productsFile,p);res.json(p[i]);});
 app.delete("/api/admin/products/:id",admin,(req,res)=>{writeJSON(productsFile,readJSON(productsFile).filter(x=>x.id!==Number(req.params.id)));res.json({ok:true});});
 
-app.get("/{*splat}",(req,res)=>res.sendFile(path.join(ROOT,"public","index.html")));
+function sendStore(req,res){
+  const file=path.join(ROOT,"public","index.html");
+  let html=fs.readFileSync(file,"utf8");
+  html=html.replace("</body>",'<script src="/cod-advance.js?v=1"></script></body>');
+  res.type("html").send(html);
+}
+app.get("/",sendStore);
+app.get("/index.html",sendStore);
+app.get("/{*splat}",sendStore);
 app.listen(PORT,()=>console.log(`UNIQORA running at http://localhost:${PORT}`));
