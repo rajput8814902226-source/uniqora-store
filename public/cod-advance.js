@@ -30,6 +30,12 @@
       let options={key:d.keyId,amount:d.amount,currency:'INR',name:'UNIQORA',description:isCOD?'₹100 COD Advance — '+d.orderId:'UNIQORA Order '+d.orderId,order_id:d.razorpayOrderId,prefill:{name:f.name,contact:f.phone,email:f.email||''},theme:{color:'#17130f'},handler:async function(resp){
         let vr=await fetch('/api/payment/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({orderId:d.orderId,...resp})}),vd=await vr.json();
         if(!vr.ok)return alert(vd.error||'Payment verification failed. Please contact support with Order ID '+d.orderId);
+        if (typeof fbq === 'function') {
+  fbq('track', 'Purchase', {
+    value: Number(isCOD ? vd.advanceAmount : d.amount / 100),
+    currency: 'INR'
+  });
+}
         cart=[];save();closeModal();closeCart();
         alert(isCOD?`COD order confirmed! ₹${vd.advanceAmount} advance paid. ₹${vd.balanceDue} payable on delivery. Order ID: ${d.orderId}`:`Payment successful! Order ID: ${d.orderId}`);
         location.hash='#/';
