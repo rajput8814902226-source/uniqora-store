@@ -79,5 +79,5 @@ app.put("/api/admin/products/:id",admin,(req,res)=>{const p=readJSON(productsFil
 app.delete("/api/admin/products/:id",admin,(req,res)=>{writeJSON(productsFile,readJSON(productsFile).filter(x=>x.id!==Number(req.params.id)));res.json({ok:true});});
 
 function sendStore(req,res){const file=path.join(ROOT,"public","index.html");let html=fs.readFileSync(file,"utf8");html=html.replace("</footer>",'<p style="display:flex;gap:18px;flex-wrap:wrap;margin-top:18px"><a href="/terms.html" style="color:#fff;text-decoration:underline">Terms & Conditions</a><a href="/privacy.html" style="color:#fff;text-decoration:underline">Privacy Policy</a></p></footer>');html=html.replace("<body>",'<body><script src="/uniqora-loader.js?v=1"></script>');html=html.replace("</body>",'<script src="/cod-advance.js?v=1"></script><script src="/related-products.js?v=1"></script><script src="/premium-buy.js?v=1"></script></body>');res.type("html").send(html);}
-app.get("/",sendStore);app.get("/index.html",sendStore);app.get("/{*splat}",sendStore);
+app.get("/",sendStore);app.get("/index.html",sendStore);app.get("/admin",(req,res)=>res.sendFile(path.join(ROOT,"public","admin","index.html")));app.get("/admin/",(req,res)=>res.sendFile(path.join(ROOT,"public","admin","index.html")));app.get("/{*splat}",sendStore);
 app.listen(PORT,()=>console.log(`UNIQORA running at http://localhost:${PORT}`));
